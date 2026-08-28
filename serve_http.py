@@ -42,6 +42,34 @@ async def runsync(request: Request):
             "delayTime": 0, "executionTime": elapsed_ms}
 
 
+def adapt_prompt_to_gender(prompt, source_image):
+    """Adapta la base al genero de la cara fuente (lo detecta buffalo_l).
+
+    Convencion: el token {person} en el prompt se reemplaza por
+    "young woman" / "young man". Sin token, se agrega una frase al final.
+    Para caras femeninas ademas se elimina "clean shaven face": contradice
+    y masculiniza la mandibula de la base."""
+    try:
+        face, _ = rp_handler.best_face_any_orientation(
+            rp_handler.load_image(source_image))
+        sex = getattr(face, "sex", None) if face is not None else None
+    except Exception:
+        sex = None
+    if sex not in ("F", "M"):
+        return prompt.replace("{person}", "young adult")
+
+    word = "young woman" if sex == "F" else "young man"
+    if "{person}" in prompt:
+        prompt = prompt.replace("{person}", word)
+    else:
+        prompt += f". The character is a {word}."
+    if sex == "F":
+        for frase in ("clean shaven face, ", ", clean shaven face",
+                      "clean shaven face"):
+            prompt = prompt.replace(frase, "")
+    return prompt
+
+
 def generate_base_runware(prompt, seed, width, height):
     import uuid
 
@@ -86,6 +114,7 @@ async def filter_ai(request: Request):
         if not prompt:
             raise HTTPException(status_code=400,
                                 detail="falta target_image o prompt")
+        prompt = adapt_prompt_to_gender(prompt, body["source_image"])
         base_url = generate_base_runware(prompt, int(body.get("seed", 333)),
                                          int(body.get("width", 832)),
                                          int(body.get("height", 1248)))
