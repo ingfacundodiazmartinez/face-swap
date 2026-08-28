@@ -1,6 +1,6 @@
 # Face swap worker en Fly.io — auto-stop: paga solo mientras corre (~$1/mes base)
 app = "faceswap-worker-facu"
-primary_region = "eze"
+primary_region = "gru"
 
 [build]
   dockerfile = "Dockerfile"
