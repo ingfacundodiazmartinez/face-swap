@@ -145,12 +145,15 @@ def describe_source_gemini(source_image):
 
         instruccion = (
             "Describe the main person in ONE short English phrase suitable for "
-            "an image generation prompt. Start with 'man' or 'woman'. Include: "
-            "apparent age range, hair color, hair length and style (mention "
-            "receding hairline or baldness if present), facial hair if any, "
-            "glasses if any. No names, no emotions, no clothing, no background. "
-            "Example: 'man in his early thirties with short dark brown hair, "
-            "receding hairline and light stubble'. Reply with the phrase only.")
+            "an image generation prompt. Start with 'man', 'woman', 'boy' or "
+            "'girl' — use boy/girl for minors and ALWAYS state their apparent "
+            "age. Include: apparent age range, hair color, hair length and "
+            "style (mention receding hairline or baldness if present), facial "
+            "hair if any, glasses if any. No names, no emotions, no clothing, "
+            "no background. Examples: 'man in his early thirties with short "
+            "dark brown hair, receding hairline and light stubble' / 'boy "
+            "around 3 years old with short curly blond hair'. Reply with the "
+            "phrase only.")
         r = rq.post(
             "https://generativelanguage.googleapis.com/v1beta/models/"
             "gemini-2.5-flash-lite:generateContent",
