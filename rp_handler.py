@@ -102,7 +102,17 @@ def handler(job):
 
     out = swapper.get(tgt, biggest(tgt_faces), src_face, paste_back=True)
     if inp.get("enhance", True):
-        _, _, out = enhancer.enhance(out, only_center_face=True, paste_back=True)
+        # GFPGAN restaura la cara de 128px pero "aerografia" los poros. La
+        # mezcla con el swap crudo conserva textura real: 0.6 restaurado +
+        # 0.4 crudo por defecto (enhance_strength=1.0 = restauracion pura).
+        crudo = out.copy()
+        _, _, restaurado = enhancer.enhance(out, only_center_face=True,
+                                            paste_back=True)
+        fuerza = min(max(float(inp.get("enhance_strength", 0.6)), 0.0), 1.0)
+        if restaurado.shape == crudo.shape:
+            out = cv2.addWeighted(restaurado, fuerza, crudo, 1.0 - fuerza, 0)
+        else:
+            out = restaurado
 
     ok, buf = cv2.imencode(".png", out)
     if not ok:
