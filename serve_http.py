@@ -231,7 +231,7 @@ def adapt_prompt_to_source(prompt, source_image):
     return prompt
 
 
-def generate_base_runware(prompt, seed, width, height):
+def generate_base_runware(prompt, seed, width, height, negative=None):
     import uuid
 
     import requests as rq
@@ -241,6 +241,8 @@ def generate_base_runware(prompt, seed, width, height):
     task = {"taskType": "imageInference", "taskUUID": str(uuid.uuid4()),
             "positivePrompt": prompt, "model": "runware:z-image@turbo",
             "width": width, "height": height, "numberResults": 1, "seed": seed}
+    if negative:
+        task["negativePrompt"] = negative
     r = rq.post("https://api.runware.ai/v1", json=[task], timeout=120,
                 headers={"Authorization": f"Bearer {key}"})
     r.raise_for_status()
@@ -328,10 +330,15 @@ async def filter_ai(request: Request):
         if not prompt:
             raise HTTPException(status_code=400,
                                 detail="falta target_image o prompt")
-        prompt = adapt_prompt_to_source(prompt, body["source_image"])
-        base_url = generate_base_runware(prompt, int(body.get("seed", 333)),
+        # Convencion "positivo ||| negativo" en el prompt del filtro: el
+        # negativo sirve para alejar priors de franquicia (ej. "Harry
+        # Potter, Daniel Radcliffe" en el filtro de Hogwarts).
+        positivo, _, negativo = prompt.partition("|||")
+        positivo = adapt_prompt_to_source(positivo.strip(), body["source_image"])
+        base_url = generate_base_runware(positivo, int(body.get("seed", 333)),
                                          int(body.get("width", 832)),
-                                         int(body.get("height", 1248)))
+                                         int(body.get("height", 1248)),
+                                         negative=negativo.strip() or None)
         target = base_url
 
     output = rp_handler.handler({"input": {
