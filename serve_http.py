@@ -158,7 +158,10 @@ def describe_source_gemini(source_image):
             json={"contents": [{"parts": [
                 {"inline_data": {"mime_type": mime,
                                  "data": b64mod.b64encode(raw).decode()}},
-                {"text": instruccion}]}]})
+                {"text": instruccion}]}],
+                  # Determinismo: misma foto → misma descripcion → misma
+                  # base con la misma semilla (reproducible en produccion).
+                  "generationConfig": {"temperature": 0}})
         r.raise_for_status()
         texto = r.json()["candidates"][0]["content"]["parts"][0]["text"]
         texto = " ".join(texto.split()).strip().strip(".").strip()
