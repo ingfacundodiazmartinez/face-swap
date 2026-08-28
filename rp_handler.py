@@ -44,16 +44,29 @@ def best_face_any_orientation(img):
     interpretan distinto); el puntaje del detector es la unica verdad."""
     rotations = [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180,
                  cv2.ROTATE_90_COUNTERCLOCKWISE]
-    best_face, best_score, best_idx = None, -1.0, -1
-    scores = []
+    best_face, best_upright, best_idx = None, -2.0, -1
+    uprightness, scores = [], []
     for idx, rot in enumerate(rotations):
         candidate = img if rot is None else cv2.rotate(img, rot)
         faces = app.get(candidate)
-        score = float(biggest(faces).det_score) if faces else 0.0
-        scores.append(round(score, 4))
-        if faces and score > best_score:
-            best_face, best_score, best_idx = biggest(faces), score, idx
-    return best_face, {"rotacion_elegida": best_idx, "puntajes": scores}
+        if not faces:
+            uprightness.append(-2.0)
+            scores.append(0.0)
+            continue
+        f = biggest(faces)
+        # Geometria manda: en la orientacion correcta los ojos estan ARRIBA
+        # de la boca. El det_score NO sirve de oraculo (puntua caras de
+        # costado por encima de la derecha; verificado con datos reales).
+        eyes = (f.kps[0] + f.kps[1]) / 2.0
+        mouth = (f.kps[3] + f.kps[4]) / 2.0
+        v = mouth - eyes
+        up = float(v[1] / (np.linalg.norm(v) + 1e-6))  # 1.0 = perfectamente derecha
+        uprightness.append(round(up, 4))
+        scores.append(round(float(f.det_score), 4))
+        if up > best_upright:
+            best_face, best_upright, best_idx = f, up, idx
+    return best_face, {"rotacion_elegida": best_idx,
+                       "verticalidad": uprightness, "puntajes": scores}
 
 
 def biggest(faces):
