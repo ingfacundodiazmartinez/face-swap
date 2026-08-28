@@ -333,21 +333,31 @@ async def filter_ai(request: Request):
         if not prompt:
             raise HTTPException(status_code=400,
                                 detail="falta target_image o prompt")
-        # Convencion "positivo ||| negativo" en el prompt del filtro: el
-        # negativo sirve para alejar priors de franquicia (ej. "Harry
-        # Potter, Daniel Radcliffe" en el filtro de Hogwarts).
-        positivo, _, negativo = prompt.partition("|||")
-        positivo = adapt_prompt_to_source(positivo.strip(), body["source_image"])
+        # Convencion "positivo ||| negativo ||| opciones" en el prompt del
+        # filtro. El negativo aleja priors de franquicia (ej. "Harry
+        # Potter, Daniel Radcliffe"). Las opciones son clave=valor por
+        # filtro, hoy: enhance_strength (GFPGAN 1.0 borra mechones finos
+        # sobre la frente pero aerografia; 0.6 conserva textura de piel —
+        # cada filtro elige su punto sin costo extra).
+        partes = [p.strip() for p in prompt.split("|||")]
+        positivo = adapt_prompt_to_source(partes[0], body["source_image"])
+        negativo = partes[1] if len(partes) > 1 and partes[1] else None
+        if len(partes) > 2 and partes[2]:
+            for par in partes[2].split(","):
+                clave, _, valor = par.partition("=")
+                if clave.strip() == "enhance_strength":
+                    body["enhance_strength"] = float(valor)
         base_url = generate_base_runware(positivo, int(body.get("seed", 333)),
                                          int(body.get("width", 832)),
                                          int(body.get("height", 1248)),
-                                         negative=negativo.strip() or None)
+                                         negative=negativo)
         target = base_url
 
     output = rp_handler.handler({"input": {
         "source_image": body["source_image"],
         "target_image": target,
-        "enhance": body.get("enhance", True)}})
+        "enhance": body.get("enhance", True),
+        "enhance_strength": body.get("enhance_strength", 0.6)}})
     if "error" in output:
         raise HTTPException(status_code=422, detail=output["error"])
     return {"image": output["image"], "base_url": base_url,
