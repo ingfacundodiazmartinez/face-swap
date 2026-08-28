@@ -243,34 +243,6 @@ def es_menor(desc):
     return bool(desc) and desc.lower().split()[0] in ("boy", "girl")
 
 
-def edit_photo_qwen(source_image, positivo, seed):
-    """Camino para MENORES: inswapper no preserva caras infantiles (red de
-    identidad entrenada con adultos → nene generico). Qwen-Image-Edit
-    ($0.007) EDITA la foto real: la cara queda identica porque nunca se
-    reconstruye. La instruccion se deriva del mismo basePrompt del filtro."""
-    import uuid
-
-    import requests as rq
-    key = os.environ.get("RUNWARE_API_KEY")
-    if not key:
-        raise HTTPException(status_code=500, detail="RUNWARE_API_KEY no configurada")
-
-    instruccion = (
-        f"Transform the person in this photo into: {positivo}. "
-        "Keep their face, facial features, hair color and expression exactly "
-        "identical to the original photo. Photorealistic, like a real "
-        "photograph or movie still, not an illustration.")
-    task = {"taskType": "imageInference", "taskUUID": str(uuid.uuid4()),
-            "positivePrompt": instruccion, "model": "runware:108@22",
-            "width": 832, "height": 1248, "numberResults": 1, "seed": seed,
-            "referenceImages": [source_image]}
-    r = rq.post("https://api.runware.ai/v1", json=[task], timeout=180,
-                headers={"Authorization": f"Bearer {key}"})
-    r.raise_for_status()
-    body = r.json()
-    if body.get("errors"):
-        raise HTTPException(status_code=502, detail=f"runware qwen: {body['errors']}")
-    return body["data"][0]["imageURL"]
 
 
 def generate_base_runware(prompt, seed, width, height, negative=None):
@@ -389,20 +361,16 @@ async def filter_ai(request: Request):
                 if clave.strip() == "enhance_strength":
                     body["enhance_strength"] = float(valor)
 
-        # MENORES: sin swap. inswapper no preserva caras infantiles, asi
-        # que la foto real se EDITA con Qwen ($0.007): cara identica
-        # garantizada. Adultos siguen por base generada + swap ($0.0017).
+        # MENORES: el swap no preserva caras infantiles (inswapper esta
+        # entrenado con adultos → nene generico). Se rechaza el pedido con
+        # 409 y las apps caen SOLAS a su camino de edicion (gpt-image-2),
+        # que conserva la cara real. Benchmarks: Qwen-Edit barato quedo
+        # descartado por calidad ("espantoso") y p-image-edit cuesta lo
+        # mismo que gpt — no hay atajo barato para menores.
         if es_menor(desc):
-            import base64 as b64mod
-
-            import requests as rq
-            print(f"[menor] edicion Qwen para: {desc}", flush=True)
-            edit_url = edit_photo_qwen(body["source_image"], positivo,
-                                       int(body.get("seed", 333)))
-            raw = rq.get(edit_url, timeout=60).content
-            return {"image": b64mod.b64encode(raw).decode(),
-                    "base_url": edit_url, "camino": "qwen_edit_menor",
-                    "executionTime": int((time.time() - started) * 1000)}
+            print(f"[menor] rechazado para edicion en la app: {desc}", flush=True)
+            raise HTTPException(status_code=409,
+                                detail="fuente menor de edad: usar el camino de edicion")
 
         base_url = generate_base_runware(positivo, int(body.get("seed", 333)),
                                          int(body.get("width", 832)),
