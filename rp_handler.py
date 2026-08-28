@@ -31,10 +31,13 @@ def load_image(value):
         data = requests.get(value, timeout=60).content
     else:
         data = base64.b64decode(value.split(",")[-1])
-    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
-        raise ValueError("no se pudo decodificar la imagen")
-    return img
+    # PIL aplica la orientacion EXIF de forma canonica y la descarta;
+    # cv2.imdecode/imread la interpretan distinto segun version (bug real).
+    import io
+    from PIL import Image, ImageOps
+    pil = Image.open(io.BytesIO(data))
+    pil = ImageOps.exif_transpose(pil).convert("RGB")
+    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
 
 
 def biggest(faces):
