@@ -59,8 +59,10 @@ def prepare_source(path, max_side=1200):
     (deteccion sobre imagen gigante triplicaba el tiempo)."""
     import io
 
-    from PIL import Image, ImageOps
-    img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    from PIL import Image
+    # Sin exif_transpose a proposito: los tags de orientacion pueden estar
+    # viciados; el worker encuentra la orientacion correcta por deteccion.
+    img = Image.open(path).convert("RGB")
     if max(img.size) > max_side:
         img.thumbnail((max_side, max_side), Image.LANCZOS)
     buf = io.BytesIO()

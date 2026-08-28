@@ -31,13 +31,28 @@ def load_image(value):
         data = requests.get(value, timeout=60).content
     else:
         data = base64.b64decode(value.split(",")[-1])
-    # PIL aplica la orientacion EXIF de forma canonica y la descarta;
-    # cv2.imdecode/imread la interpretan distinto segun version (bug real).
-    import io
-    from PIL import Image, ImageOps
-    pil = Image.open(io.BytesIO(data))
-    pil = ImageOps.exif_transpose(pil).convert("RGB")
-    return cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+    img = cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR)
+    if img is None:
+        raise ValueError("no se pudo decodificar la imagen")
+    return img
+
+
+def best_face_any_orientation(img):
+    """Detecta la cara probando las 4 orientaciones y devuelve la mejor.
+
+    Los metadatos EXIF son poco confiables (tags viciados, librerias que los
+    interpretan distinto); el puntaje del detector es la unica verdad."""
+    rotations = [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180,
+                 cv2.ROTATE_90_COUNTERCLOCKWISE]
+    best_face, best_score = None, -1.0
+    for rot in rotations:
+        candidate = img if rot is None else cv2.rotate(img, rot)
+        faces = app.get(candidate)
+        if faces:
+            f = biggest(faces)
+            if f.det_score > best_score:
+                best_face, best_score = f, float(f.det_score)
+    return best_face
 
 
 def biggest(faces):
@@ -49,14 +64,14 @@ def handler(job):
     src = load_image(inp["source_image"])
     tgt = load_image(inp["target_image"])
 
-    src_faces = app.get(src)
-    if not src_faces:
+    src_face = best_face_any_orientation(src)
+    if src_face is None:
         return {"error": "no se detecto cara en source_image"}
     tgt_faces = app.get(tgt)
     if not tgt_faces:
         return {"error": "no se detecto cara en target_image"}
 
-    out = swapper.get(tgt, biggest(tgt_faces), biggest(src_faces), paste_back=True)
+    out = swapper.get(tgt, biggest(tgt_faces), src_face, paste_back=True)
     if inp.get("enhance", True):
         _, _, out = enhancer.enhance(out, only_center_face=True, paste_back=True)
 
