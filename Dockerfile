@@ -31,6 +31,6 @@ RUN mkdir -p /app/models /root/.insightface/models/buffalo_l /app/gfpgan/weights
     curl -fsSL -o /app/gfpgan/weights/parsing_parsenet.pth \
       https://github.com/xinntao/facexlib/releases/download/v0.2.2/parsing_parsenet.pth
 
-COPY rp_handler.py /app/
+COPY rp_handler.py serve_http.py /app/
 
 CMD ["python", "-u", "rp_handler.py"]
