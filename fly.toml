@@ -1,0 +1,26 @@
+# Face swap worker en Fly.io — auto-stop: paga solo mientras corre (~$1/mes base)
+app = "faceswap-worker-facu"
+primary_region = "eze"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  app = "uvicorn serve_http:app --host 0.0.0.0 --port 8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[http_service.concurrency]
+  type = "requests"
+  hard_limit = 2
+  soft_limit = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 8
+  memory = "8gb"
