@@ -53,18 +53,16 @@ def generate_base(prompt, seed, width, height, key):
     return data["imageURL"]
 
 
-def prepare_source(path, max_side=1200):
-    """Normaliza la foto fuente: orientacion EXIF aplicada, sin metadatos,
-    lado mayor <= max_side. Evita el bug de orientacion y acelera el swap
-    (deteccion sobre imagen gigante triplicaba el tiempo)."""
+def prepare_source(path):
+    """Re-codifica la foto fuente sin metadatos, a resolucion COMPLETA.
+
+    Sin exif_transpose (tags viciados; el worker resuelve orientacion por
+    deteccion) y sin reducir: probado que bajar a 1200 o incluso 2000px
+    degrada la identidad del swap (bigote manchado, rasgos lavados)."""
     import io
 
     from PIL import Image
-    # Sin exif_transpose a proposito: los tags de orientacion pueden estar
-    # viciados; el worker encuentra la orientacion correcta por deteccion.
     img = Image.open(path).convert("RGB")
-    if max(img.size) > max_side:
-        img.thumbnail((max_side, max_side), Image.LANCZOS)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
