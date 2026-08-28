@@ -176,7 +176,7 @@ def describe_source_gemini(source_image):
     return None
 
 
-def adapt_prompt_to_source(prompt, source_image):
+def adapt_prompt_to_source(prompt, source_image, desc=None):
     """Adapta la base a la cara fuente: genero (buffalo_l lo detecta) y
     color de pelo (muestreo de pixeles).
 
@@ -188,7 +188,8 @@ def adapt_prompt_to_source(prompt, source_image):
     y masculiniza la mandibula de la base."""
     # Camino preferido: descripcion de Gemini (cubre genero, pelo, barba,
     # lentes, edad — mejor que cualquier heuristica de pixeles).
-    desc = describe_source_gemini(source_image)
+    if desc is None:
+        desc = describe_source_gemini(source_image)
     if desc:
         for frase in ("with {hair} hair, ", ", with {hair} hair",
                       "with {hair} hair", "with slicked {hair} hair"):
@@ -235,6 +236,41 @@ def adapt_prompt_to_source(prompt, source_image):
                       "clean shaven face"):
             prompt = prompt.replace(frase, "")
     return prompt
+
+
+def es_menor(desc):
+    """La descripcion de Gemini empieza con boy/girl para menores."""
+    return bool(desc) and desc.lower().split()[0] in ("boy", "girl")
+
+
+def edit_photo_qwen(source_image, positivo, seed):
+    """Camino para MENORES: inswapper no preserva caras infantiles (red de
+    identidad entrenada con adultos → nene generico). Qwen-Image-Edit
+    ($0.007) EDITA la foto real: la cara queda identica porque nunca se
+    reconstruye. La instruccion se deriva del mismo basePrompt del filtro."""
+    import uuid
+
+    import requests as rq
+    key = os.environ.get("RUNWARE_API_KEY")
+    if not key:
+        raise HTTPException(status_code=500, detail="RUNWARE_API_KEY no configurada")
+
+    instruccion = (
+        f"Transform the person in this photo into: {positivo}. "
+        "Keep their face, facial features, hair color and expression exactly "
+        "identical to the original photo. Photorealistic, like a real "
+        "photograph or movie still, not an illustration.")
+    task = {"taskType": "imageInference", "taskUUID": str(uuid.uuid4()),
+            "positivePrompt": instruccion, "model": "runware:108@22",
+            "width": 832, "height": 1248, "numberResults": 1, "seed": seed,
+            "referenceImages": [source_image]}
+    r = rq.post("https://api.runware.ai/v1", json=[task], timeout=180,
+                headers={"Authorization": f"Bearer {key}"})
+    r.raise_for_status()
+    body = r.json()
+    if body.get("errors"):
+        raise HTTPException(status_code=502, detail=f"runware qwen: {body['errors']}")
+    return body["data"][0]["imageURL"]
 
 
 def generate_base_runware(prompt, seed, width, height, negative=None):
@@ -343,13 +379,31 @@ async def filter_ai(request: Request):
         # sobre la frente pero aerografia; 0.6 conserva textura de piel —
         # cada filtro elige su punto sin costo extra).
         partes = [p.strip() for p in prompt.split("|||")]
-        positivo = adapt_prompt_to_source(partes[0], body["source_image"])
+        desc = describe_source_gemini(body["source_image"])
+        positivo = adapt_prompt_to_source(partes[0], body["source_image"],
+                                          desc=desc)
         negativo = partes[1] if len(partes) > 1 and partes[1] else None
         if len(partes) > 2 and partes[2]:
             for par in partes[2].split(","):
                 clave, _, valor = par.partition("=")
                 if clave.strip() == "enhance_strength":
                     body["enhance_strength"] = float(valor)
+
+        # MENORES: sin swap. inswapper no preserva caras infantiles, asi
+        # que la foto real se EDITA con Qwen ($0.007): cara identica
+        # garantizada. Adultos siguen por base generada + swap ($0.0017).
+        if es_menor(desc):
+            import base64 as b64mod
+
+            import requests as rq
+            print(f"[menor] edicion Qwen para: {desc}", flush=True)
+            edit_url = edit_photo_qwen(body["source_image"], positivo,
+                                       int(body.get("seed", 333)))
+            raw = rq.get(edit_url, timeout=60).content
+            return {"image": b64mod.b64encode(raw).decode(),
+                    "base_url": edit_url, "camino": "qwen_edit_menor",
+                    "executionTime": int((time.time() - started) * 1000)}
+
         base_url = generate_base_runware(positivo, int(body.get("seed", 333)),
                                          int(body.get("width", 832)),
                                          int(body.get("height", 1248)),
