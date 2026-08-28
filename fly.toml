@@ -9,6 +9,7 @@ primary_region = "eze"
   app = "uvicorn serve_http:app --host 0.0.0.0 --port 8000"
 
 [http_service]
+  processes = ["app"]
   internal_port = 8000
   force_https = true
   auto_stop_machines = "stop"
