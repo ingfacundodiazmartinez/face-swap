@@ -91,17 +91,35 @@ def estimate_hair_color(img, face, debug):
     if len(pelo_px) < 0.10 * len(band):  # calvicie o franja sin pelo
         return None
 
-    b, g, r = np.median(pelo_px, axis=0)  # BGR de cv2
+    ref = np.median(pelo_px, axis=0)  # BGR de cv2
+    b, g, r = ref
     lum = 0.114 * b + 0.587 * g + 0.299 * r
     if lum < 45:
-        return "black"
-    if lum > 130 and abs(r - g) < 35 and abs(g - b) < 35 and abs(r - b) < 35:
-        return "gray"
-    if r > g > b and (r - b) > 45:
-        return "blond" if lum > 135 else ("auburn" if (r - g) > 35 else "brown")
-    if lum < 100:
-        return "dark brown"
-    return "brown"
+        color = "black"
+    elif lum > 130 and abs(r - g) < 35 and abs(g - b) < 35 and abs(r - b) < 35:
+        color = "gray"
+    elif r > g > b and (r - b) > 45:
+        color = "blond" if lum > 135 else ("auburn" if (r - g) > 35 else "brown")
+    elif lum < 100:
+        color = "dark brown"
+    else:
+        color = "brown"
+
+    # Largo: el pelo largo flanquea la cara (orejas y mandibula). Calibrado
+    # con /analyze sobre caras reales: largo da 0.8+, corto da <0.2.
+    # Limite conocido: pelo largo atado atras lee "corto" (dano menor).
+    fracciones = []
+    for ya, yb, xa, xb in (
+            (y1 + int(0.35 * h), y1 + int(0.65 * h), x1 - int(0.15 * w), x1),
+            (y1 + int(0.35 * h), y1 + int(0.65 * h), x2, x2 + int(0.15 * w)),
+            (y1 + int(0.55 * h), y1 + int(0.95 * h), x1 - int(0.15 * w), x1),
+            (y1 + int(0.55 * h), y1 + int(0.95 * h), x2, x2 + int(0.15 * w))):
+        zona = img[max(0, ya):min(H, yb), max(0, xa):min(W, xb)]
+        if zona.size:
+            zona = zona.reshape(-1, 3).astype(float)
+            fracciones.append(float((np.abs(zona - ref).sum(axis=1) < 100).mean()))
+    largo = "long" if fracciones and np.mean(fracciones) > 0.5 else "short"
+    return f"{largo} {color}"
 
 
 def adapt_prompt_to_source(prompt, source_image):
