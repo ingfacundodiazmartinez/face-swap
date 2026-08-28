@@ -42,19 +42,79 @@ async def runsync(request: Request):
             "delayTime": 0, "executionTime": elapsed_ms}
 
 
-def adapt_prompt_to_gender(prompt, source_image):
-    """Adapta la base al genero de la cara fuente (lo detecta buffalo_l).
+def estimate_hair_color(img, face, debug):
+    """Color de pelo aproximado muestreando la franja sobre la frente.
 
-    Convencion: el token {person} en el prompt se reemplaza por
-    "young woman" / "young man". Sin token, se agrega una frase al final.
+    Devuelve None si no hay pelo distinguible (calvicie, fondo colado):
+    la mediana de esa franja se compara con la piel de la cara — si son
+    parecidas, mejor no afirmar nada."""
+    import numpy as np
+
+    rotations = [None, None, None, None]
+    try:
+        import cv2
+        rotations = [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180,
+                     cv2.ROTATE_90_COUNTERCLOCKWISE]
+        idx = debug.get("rotacion_elegida", 0)
+        if rotations[idx] is not None:
+            img = cv2.rotate(img, rotations[idx])
+    except Exception:
+        return None
+
+    x1, y1, x2, y2 = [int(v) for v in face.bbox]
+    h = y2 - y1
+    top = max(0, int(y1 - 0.45 * h))
+    band = img[top:max(top + 1, int(y1 + 0.10 * h)), max(0, x1):x2]
+    cara = img[y1 + int(0.3 * h):y1 + int(0.7 * h), max(0, x1):x2]
+    if band.size == 0 or cara.size == 0:
+        return None
+
+    pelo = np.median(band.reshape(-1, 3), axis=0)   # BGR
+    piel = np.median(cara.reshape(-1, 3), axis=0)
+    if np.abs(pelo - piel).sum() < 60:  # franja ~ piel: calvicie o fondo
+        return None
+
+    b, g, r = pelo
+    lum = 0.114 * b + 0.587 * g + 0.299 * r
+    if lum < 60:
+        return "black"
+    if lum > 120 and abs(r - g) < 40 and abs(g - b) < 40 and abs(r - b) < 40:
+        return "gray"
+    if r > g > b and (r - b) > 45:
+        return "blond" if lum > 130 else ("auburn" if (r - g) > 35 else "brown")
+    if lum < 105:
+        return "dark brown"
+    return "brown"
+
+
+def adapt_prompt_to_source(prompt, source_image):
+    """Adapta la base a la cara fuente: genero (buffalo_l lo detecta) y
+    color de pelo (muestreo de pixeles).
+
+    Convenciones en el basePrompt:
+      {person} → "young woman" / "young man"
+      "with {hair} hair" → color estimado, o se elimina la frase entera si
+                           no se pudo estimar (calvicie, foto rara)
     Para caras femeninas ademas se elimina "clean shaven face": contradice
     y masculiniza la mandibula de la base."""
+    sex, hair = None, None
     try:
-        face, _ = rp_handler.best_face_any_orientation(
-            rp_handler.load_image(source_image))
-        sex = getattr(face, "sex", None) if face is not None else None
+        img = rp_handler.load_image(source_image)
+        face, debug = rp_handler.best_face_any_orientation(img)
+        if face is not None:
+            sex = getattr(face, "sex", None)
+            hair = estimate_hair_color(img, face, debug)
     except Exception:
-        sex = None
+        pass
+
+    if "{hair}" in prompt:
+        if hair:
+            prompt = prompt.replace("{hair}", hair)
+        else:
+            for frase in ("with {hair} hair, ", ", with {hair} hair",
+                          "with {hair} hair"):
+                prompt = prompt.replace(frase, "")
+
     if sex not in ("F", "M"):
         return prompt.replace("{person}", "young adult")
 
@@ -114,7 +174,7 @@ async def filter_ai(request: Request):
         if not prompt:
             raise HTTPException(status_code=400,
                                 detail="falta target_image o prompt")
-        prompt = adapt_prompt_to_gender(prompt, body["source_image"])
+        prompt = adapt_prompt_to_source(prompt, body["source_image"])
         base_url = generate_base_runware(prompt, int(body.get("seed", 333)),
                                          int(body.get("width", 832)),
                                          int(body.get("height", 1248)))
