@@ -234,39 +234,6 @@ def adapt_prompt_to_source(prompt, source_image):
     return prompt
 
 
-def base_passes_check(base_url, condicion):
-    """Control de calidad de la base: Gemini responde si la condicion de
-    rechazo se cumple en la imagen. True = base aprobada. Ante cualquier
-    fallo del chequeo, se aprueba (mejor entregar que colgarse)."""
-    import requests as rq
-    key = os.environ.get("GEMINI_API_KEY")
-    if not key:
-        return True
-    try:
-        import base64 as b64mod
-        raw = rq.get(base_url, timeout=30).content
-        pregunta = (f"Look at the person in this image. Does it show: "
-                    f"{condicion}? Answer strictly 'yes' or 'no'.")
-        r = rq.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/"
-            "gemini-2.5-flash-lite:generateContent",
-            params={"key": key}, timeout=25,
-            json={"contents": [{"parts": [
-                {"inline_data": {"mime_type": "image/jpeg",
-                                 "data": b64mod.b64encode(raw).decode()}},
-                {"text": pregunta}]}],
-                  "generationConfig": {"temperature": 0}})
-        r.raise_for_status()
-        veredicto = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-        aprobada = "yes" not in veredicto.strip().lower()[:5]
-        print(f"[qc] '{condicion}' -> {'aprobada' if aprobada else 'RECHAZADA'}",
-              flush=True)
-        return aprobada
-    except Exception as error:
-        print(f"[qc] chequeo fallo ({error}); base aprobada", flush=True)
-        return True
-
-
 def generate_base_runware(prompt, seed, width, height, negative=None):
     import uuid
 
@@ -366,28 +333,15 @@ async def filter_ai(request: Request):
         if not prompt:
             raise HTTPException(status_code=400,
                                 detail="falta target_image o prompt")
-        # Convencion "positivo ||| negativo ||| condicion-de-rechazo".
-        # El negativo aleja priors de franquicia. La condicion de rechazo
-        # es un control de calidad: Gemini mira la base generada y si la
-        # condicion se cumple (ej. "flequillo sobre la frente") se
-        # regenera con otra semilla, hasta 3 intentos. Los priors fuertes
-        # no se vencen con palabras (probado 5 veces con el flequillo de
-        # Potter): se vencen VERIFICANDO el resultado.
-        partes = [p.strip() for p in prompt.split("|||")]
-        positivo = adapt_prompt_to_source(partes[0], body["source_image"])
-        negativo = partes[1] if len(partes) > 1 and partes[1] else None
-        rechazo = partes[2] if len(partes) > 2 and partes[2] else None
-
-        seed = int(body.get("seed", 333))
-        for intento in range(3):
-            base_url = generate_base_runware(
-                positivo, seed + intento * 1000,
-                int(body.get("width", 832)), int(body.get("height", 1248)),
-                negative=negativo)
-            if not rechazo or base_passes_check(base_url, rechazo):
-                break
-            print(f"[qc] base rechazada ({rechazo}), intento {intento + 1}",
-                  flush=True)
+        # Convencion "positivo ||| negativo" en el prompt del filtro: el
+        # negativo sirve para alejar priors de franquicia (ej. "Harry
+        # Potter, Daniel Radcliffe" en el filtro de Hogwarts).
+        positivo, _, negativo = prompt.partition("|||")
+        positivo = adapt_prompt_to_source(positivo.strip(), body["source_image"])
+        base_url = generate_base_runware(positivo, int(body.get("seed", 333)),
+                                         int(body.get("width", 832)),
+                                         int(body.get("height", 1248)),
+                                         negative=negativo.strip() or None)
         target = base_url
 
     output = rp_handler.handler({"input": {
