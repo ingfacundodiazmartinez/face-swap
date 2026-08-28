@@ -122,6 +122,54 @@ def estimate_hair_color(img, face, debug):
     return f"{largo} {color}"
 
 
+def describe_source_gemini(source_image):
+    """Descripcion de la persona hecha por Gemini 2.5 Flash Lite (~$0.0001).
+
+    Devuelve una frase lista para prompt ("man in his early thirties with
+    short dark brown receding hair and light stubble") o None si no hay
+    key o la llamada falla — en ese caso rigen las heuristicas locales."""
+    import base64 as b64mod
+
+    import requests as rq
+    key = os.environ.get("GEMINI_API_KEY")
+    if not key:
+        return None
+    try:
+        if source_image.startswith("http"):
+            raw = rq.get(source_image, timeout=30).content
+            mime = "image/jpeg"
+        else:
+            cabeza, _, datos = source_image.partition(",")
+            raw = b64mod.b64decode(datos or source_image)
+            mime = "image/png" if "png" in cabeza else "image/jpeg"
+
+        instruccion = (
+            "Describe the main person in ONE short English phrase suitable for "
+            "an image generation prompt. Start with 'man' or 'woman'. Include: "
+            "apparent age range, hair color, hair length and style (mention "
+            "receding hairline or baldness if present), facial hair if any, "
+            "glasses if any. No names, no emotions, no clothing, no background. "
+            "Example: 'man in his early thirties with short dark brown hair, "
+            "receding hairline and light stubble'. Reply with the phrase only.")
+        r = rq.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+            "gemini-2.5-flash-lite:generateContent",
+            params={"key": key}, timeout=25,
+            json={"contents": [{"parts": [
+                {"inline_data": {"mime_type": mime,
+                                 "data": b64mod.b64encode(raw).decode()}},
+                {"text": instruccion}]}]})
+        r.raise_for_status()
+        texto = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+        texto = " ".join(texto.split()).strip().strip(".").strip()
+        if 10 < len(texto) < 250:
+            print(f"[gemini] descripcion: {texto}", flush=True)
+            return texto
+    except Exception as error:
+        print(f"[gemini] fallo ({error}); heuristicas locales", flush=True)
+    return None
+
+
 def adapt_prompt_to_source(prompt, source_image):
     """Adapta la base a la cara fuente: genero (buffalo_l lo detecta) y
     color de pelo (muestreo de pixeles).
@@ -132,6 +180,24 @@ def adapt_prompt_to_source(prompt, source_image):
                            no se pudo estimar (calvicie, foto rara)
     Para caras femeninas ademas se elimina "clean shaven face": contradice
     y masculiniza la mandibula de la base."""
+    # Camino preferido: descripcion de Gemini (cubre genero, pelo, barba,
+    # lentes, edad — mejor que cualquier heuristica de pixeles).
+    desc = describe_source_gemini(source_image)
+    if desc:
+        for frase in ("with {hair} hair, ", ", with {hair} hair",
+                      "with {hair} hair", "with slicked {hair} hair"):
+            prompt = prompt.replace(frase, "")
+        if "{person}" in prompt:
+            prompt = prompt.replace("{person}", desc)
+        else:
+            prompt += f". The person is a {desc}."
+        # La descripcion manda sobre el vello facial del prompt fijo.
+        for frase in ("clean shaven face, ", ", clean shaven face",
+                      "clean shaven young face, ", "clean shaven face",
+                      "clean shaven young face"):
+            prompt = prompt.replace(frase, "")
+        return prompt
+
     sex, hair = None, None
     try:
         img = rp_handler.load_image(source_image)
