@@ -61,28 +61,45 @@ def estimate_hair_color(img, face, debug):
     except Exception:
         return None
 
+    H, W = img.shape[:2]
     x1, y1, x2, y2 = [int(v) for v in face.bbox]
     h = y2 - y1
-    top = max(0, int(y1 - 0.45 * h))
-    band = img[top:max(top + 1, int(y1 + 0.10 * h)), max(0, x1):x2]
+    if h <= 0 or x2 <= x1:
+        return None
+
+    # Fondo: esquinas superiores de la imagen. Piel: centro de la cara.
+    # La franja de pelo va pegada al nacimiento (y1-0.20h a y1+0.05h, centro
+    # 60% en x) y se descartan los pixeles parecidos al fondo o a la piel —
+    # sin esto, una pared clara detras da "gray" (bug real).
+    fondo = np.median(np.concatenate([
+        img[:max(1, H // 10), :max(1, W // 10)].reshape(-1, 3),
+        img[:max(1, H // 10), -max(1, W // 10):].reshape(-1, 3)]), axis=0)
     cara = img[y1 + int(0.3 * h):y1 + int(0.7 * h), max(0, x1):x2]
-    if band.size == 0 or cara.size == 0:
+    if cara.size == 0:
         return None
-
-    pelo = np.median(band.reshape(-1, 3), axis=0)   # BGR
     piel = np.median(cara.reshape(-1, 3), axis=0)
-    if np.abs(pelo - piel).sum() < 60:  # franja ~ piel: calvicie o fondo
+
+    cx1 = max(0, x1 + int(0.2 * (x2 - x1)))
+    cx2 = x2 - int(0.2 * (x2 - x1))
+    band = img[max(0, y1 - int(0.20 * h)):y1 + int(0.05 * h), cx1:cx2]
+    if band.size == 0:
+        return None
+    band = band.reshape(-1, 3).astype(float)
+
+    pelo_px = band[(np.abs(band - fondo).sum(axis=1) > 120) &
+                   (np.abs(band - piel).sum(axis=1) > 90)]
+    if len(pelo_px) < 0.10 * len(band):  # calvicie o franja sin pelo
         return None
 
-    b, g, r = pelo
+    b, g, r = np.median(pelo_px, axis=0)  # BGR de cv2
     lum = 0.114 * b + 0.587 * g + 0.299 * r
-    if lum < 60:
+    if lum < 45:
         return "black"
-    if lum > 120 and abs(r - g) < 40 and abs(g - b) < 40 and abs(r - b) < 40:
+    if lum > 130 and abs(r - g) < 35 and abs(g - b) < 35 and abs(r - b) < 35:
         return "gray"
     if r > g > b and (r - b) > 45:
-        return "blond" if lum > 130 else ("auburn" if (r - g) > 35 else "brown")
-    if lum < 105:
+        return "blond" if lum > 135 else ("auburn" if (r - g) > 35 else "brown")
+    if lum < 100:
         return "dark brown"
     return "brown"
 
