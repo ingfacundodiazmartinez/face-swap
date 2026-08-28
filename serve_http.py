@@ -166,6 +166,59 @@ def generate_base_runware(prompt, seed, width, height):
     return body["data"][0]["imageURL"]
 
 
+@app.post("/analyze")
+async def analyze_source(request: Request):
+    """Diagnostico: mediciones crudas de la cara fuente para calibrar las
+    heuristicas de pelo (color y largo) con la bbox REAL del detector."""
+    import cv2
+    import numpy as np
+
+    check_auth(request)
+    body = await request.json()
+    img = rp_handler.load_image(body["source_image"])
+    face, debug = rp_handler.best_face_any_orientation(img)
+    if face is None:
+        raise HTTPException(status_code=422, detail="sin cara")
+    rotations = [None, cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_180,
+                 cv2.ROTATE_90_COUNTERCLOCKWISE]
+    rot = rotations[debug.get("rotacion_elegida", 0)]
+    if rot is not None:
+        img = cv2.rotate(img, rot)
+
+    H, W = img.shape[:2]
+    x1, y1, x2, y2 = [int(v) for v in face.bbox]
+    h, w = y2 - y1, x2 - x1
+    hair = estimate_hair_color(img, face, debug)
+
+    def fraccion(ya, yb, xa, xb, ref):
+        band = img[max(0, ya):min(H, yb), max(0, xa):min(W, xb)]
+        if band.size == 0:
+            return None
+        band = band.reshape(-1, 3).astype(float)
+        return round(float((np.abs(band - ref).sum(axis=1) < 100).mean()), 3)
+
+    # color de pelo de referencia: mediana de la franja del nacimiento
+    band_pelo = img[max(0, y1 - int(0.20 * h)):y1 + int(0.05 * h),
+                    x1 + int(0.2 * w):x2 - int(0.2 * w)]
+    ref = np.median(band_pelo.reshape(-1, 3).astype(float), axis=0) if band_pelo.size else None
+    zonas = {}
+    if ref is not None:
+        for nombre, (ya, yb, xa, xb) in {
+            "orejas_izq": (y1 + int(0.35 * h), y1 + int(0.65 * h), x1 - int(0.15 * w), x1),
+            "orejas_der": (y1 + int(0.35 * h), y1 + int(0.65 * h), x2, x2 + int(0.15 * w)),
+            "mandibula_izq": (y1 + int(0.55 * h), y1 + int(0.95 * h), x1 - int(0.15 * w), x1),
+            "mandibula_der": (y1 + int(0.55 * h), y1 + int(0.95 * h), x2, x2 + int(0.15 * w)),
+            "cuello_izq": (y2, y2 + int(0.4 * h), x1 - int(0.10 * w), x1 + int(0.15 * w)),
+            "cuello_der": (y2, y2 + int(0.4 * h), x2 - int(0.15 * w), x2 + int(0.10 * w)),
+        }.items():
+            zonas[nombre] = fraccion(ya, yb, xa, xb, ref)
+
+    return {"bbox": [x1, y1, x2, y2], "imagen": [W, H],
+            "sexo": getattr(face, "sex", None), "color_pelo": hair,
+            "ref_pelo_bgr": [round(float(v), 1) for v in ref] if ref is not None else None,
+            "zonas": zonas, "debug": debug}
+
+
 @app.post("/filter")
 async def filter_ai(request: Request):
     """Filtro AI completo para talia: foto del usuario -> personaje.
