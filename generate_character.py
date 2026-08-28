@@ -53,8 +53,23 @@ def generate_base(prompt, seed, width, height, key):
     return data["imageURL"]
 
 
+def prepare_source(path, max_side=1200):
+    """Normaliza la foto fuente: orientacion EXIF aplicada, sin metadatos,
+    lado mayor <= max_side. Evita el bug de orientacion y acelera el swap
+    (deteccion sobre imagen gigante triplicaba el tiempo)."""
+    import io
+
+    from PIL import Image, ImageOps
+    img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
+    if max(img.size) > max_side:
+        img.thumbnail((max_side, max_side), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def swap_face(source_path, target_url, endpoint, key):
-    src_b64 = base64.b64encode(open(source_path, "rb").read()).decode()
+    src_b64 = base64.b64encode(prepare_source(source_path)).decode()
     payload = {"input": {
         "source_image": "data:image/png;base64," + src_b64,
         "target_image": target_url,
